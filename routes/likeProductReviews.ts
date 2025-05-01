@@ -4,6 +4,7 @@
  */
 
 import { type Request, type Response, type NextFunction } from 'express'
+import { z } from 'zod' // Added Zod import
 
 import * as challengeUtils from '../lib/challengeUtils'
 import { challenges } from '../data/datacache'
@@ -13,15 +14,23 @@ import * as db from '../data/mongodb'
 
 const sleep = async (ms: number) => await new Promise(resolve => setTimeout(resolve, ms))
 
+// Define validation schema for review likes
+const reviewLikeSchema = z.object({
+  id: z.string().min(1)
+})
+
 export function likeProductReviews () {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const id = req.body.id
     const user = security.authenticatedUsers.from(req)
     if (!user) {
       return res.status(401).json({ error: 'Unauthorized' })
     }
 
     try {
+      // Validate input
+      const validatedInput = reviewLikeSchema.parse(req.body)
+      const id = validatedInput.id
+
       const review = await db.reviewsCollection.findOne({ _id: id })
       if (!review) {
         return res.status(404).json({ error: 'Not found' })
@@ -53,10 +62,14 @@ export function likeProductReviews () {
         )
         res.json(result)
       } catch (err) {
-        res.status(500).json(err)
+        res.status(500).json({ error: 'An error occurred while updating the review' })
       }
     } catch (err) {
-      res.status(400).json({ error: 'Wrong Params' })
+      if (err instanceof z.ZodError) {
+        res.status(400).json({ error: 'Invalid input', details: err.errors })
+      } else {
+        res.status(400).json({ error: 'Invalid parameters' })
+      }
     }
   }
 }

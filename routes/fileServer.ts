@@ -5,36 +5,77 @@
 
 import path from 'node:path'
 import { type Request, type Response, type NextFunction } from 'express'
+import { z } from 'zod'
 
 import * as utils from '../lib/utils'
 import * as security from '../lib/insecurity'
 import { challenges } from '../data/datacache'
 import * as challengeUtils from '../lib/challengeUtils'
 
-export function servePublicFiles () {
-  return ({ params, query }: Request, res: Response, next: NextFunction) => {
-    const file = params.file
+// Define validation schema for file parameter
+const fileParamSchema = z.object({
+  file: z.string().max(100).refine(value => !value.includes('/') && !value.includes('\\'), {
+    message: 'File names cannot contain path separators'
+  })
+})
 
-    if (!file.includes('/')) {
-      verify(file, res, next)
-    } else {
-      res.status(403)
-      next(new Error('File names cannot contain forward slashes!'))
+// Define allowlisted file types
+// const ALLOWED_FILE_TYPES = ['.md', '.pdf', 'incident-support.kdbx']
+
+export function servePublicFiles () {
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      // Validate file parameter
+      const { file } = fileParamSchema.parse(req.params)
+
+      // Sanitize file name and apply additional security measures
+      const sanitizedFile = sanitizeFileName(file)
+
+      if (isAllowedFile(sanitizedFile)) {
+        // Keep CTF challenges
+        challengeUtils.solveIf(challenges.directoryListingChallenge, () => sanitizedFile.toLowerCase() === 'acquisitions.md')
+        verifySuccessfulPoisonNullByteExploit(sanitizedFile)
+
+        // Use path.join instead of path.resolve and validate the final path is within the intended directory
+        const filePath = path.join('ftp', sanitizedFile)
+        const resolvedPath = path.resolve(filePath)
+
+        // Ensure the file is within the ftp directory (prevent path traversal)
+        const ftpDir = path.resolve('ftp')
+        if (!resolvedPath.startsWith(ftpDir)) {
+          res.status(403)
+          next(new Error('Access to file outside permitted directory denied')); return
+        }
+
+        res.sendFile(resolvedPath)
+      } else {
+        res.status(403)
+        next(new Error('Only .md and .pdf files are allowed!'))
+      }
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ message: 'Invalid file parameter', details: error.errors })
+      } else {
+        next(error)
+      }
     }
   }
 
-  function verify (file: string, res: Response, next: NextFunction) {
-    if (file && (endsWithAllowlistedFileType(file) || (file === 'incident-support.kdbx'))) {
-      file = security.cutOffPoisonNullByte(file)
+  function sanitizeFileName (file: string): string {
+    // Remove null bytes and other potentially harmful characters
+    let sanitized = security.cutOffPoisonNullByte(file)
 
-      challengeUtils.solveIf(challenges.directoryListingChallenge, () => { return file.toLowerCase() === 'acquisitions.md' })
-      verifySuccessfulPoisonNullByteExploit(file)
+    // Remove any directory traversal sequences
+    sanitized = sanitized.replace(/\.\.\//g, '').replace(/\.\.\\/g, '')
 
-      res.sendFile(path.resolve('ftp/', file))
-    } else {
-      res.status(403)
-      next(new Error('Only .md and .pdf files are allowed!'))
-    }
+    return sanitized
+  }
+
+  function isAllowedFile (file: string): boolean {
+    // Check if the file is specifically allowed or has an allowed extension
+    return file === 'incident-support.kdbx' ||
+           utils.endsWith(file, '.md') ||
+           utils.endsWith(file, '.pdf')
   }
 
   function verifySuccessfulPoisonNullByteExploit (file: string) {
@@ -47,9 +88,5 @@ export function servePublicFiles () {
       return challenges.easterEggLevelOneChallenge.solved || challenges.forgottenDevBackupChallenge.solved || challenges.forgottenBackupChallenge.solved ||
         challenges.misplacedSignatureFileChallenge.solved || file.toLowerCase() === 'encrypt.pyc'
     })
-  }
-
-  function endsWithAllowlistedFileType (param: string) {
-    return utils.endsWith(param, '.md') || utils.endsWith(param, '.pdf')
   }
 }

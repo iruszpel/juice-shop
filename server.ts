@@ -65,6 +65,7 @@ import locales from './data/static/locales.json'
 
 import { login } from './routes/login'
 import * as verify from './routes/verify'
+import * as register from './routes/register'
 import * as address from './routes/address'
 import * as chatbot from './routes/chatbot'
 import * as metrics from './routes/metrics'
@@ -403,9 +404,15 @@ restoreOverwrittenFilesWithOriginals().then(() => {
     }
     next()
   })
-  app.post('/api/Users', verify.registerAdminChallenge())
-  app.post('/api/Users', verify.passwordRepeatChallenge()) // vuln-code-snippet hide-end
-  app.post('/api/Users', verify.emptyUserRegistration())
+
+  // Use the secure implementation from register.ts for CTF challenges
+  app.post('/api/Users', register.registerAdminChallenge())
+  app.post('/api/Users', register.passwordRepeatChallenge())
+  app.post('/api/Users', register.emptyUserRegistration())
+
+  // Use the secure implementation for user registration
+  app.post('/api/Users', register.registerUser())
+
   /* Unauthorized users are not allowed to access B2B API */
   app.use('/b2b/v2', security.isAuthorized())
   /* Check if the quantity is available in stock and limit per user not exceeded, then add item to basket */
@@ -624,7 +631,7 @@ restoreOverwrittenFilesWithOriginals().then(() => {
 
   /* File Serving */
   app.get('/the/devs/are/so/funny/they/hid/an/easter/egg/within/the/easter/egg', serveEasterEgg())
-  app.get('/this/page/is/hidden/behind/an/incredibly/high/paywall/that/could/only/be/unlocked/by/sending/1btc/to/us', servePremiumContent())
+  app.get('/this/page/is/hidden/behind/an/incredibly/high/paywall/that/could/only/be/unlocked/by/sending/1btc-to-us', servePremiumContent())
   app.get('/we/may/also/instruct/you/to/refuse/all/reasonably/necessary/responsibility', servePrivacyPolicyProof())
 
   /* Route for dataerasure page */

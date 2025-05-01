@@ -4,15 +4,21 @@
  */
 import { type Request, type Response, type NextFunction } from 'express'
 import config from 'config'
+import { z } from 'zod'
 
 import * as challengeUtils from '../lib/challengeUtils'
 import { challenges, users } from '../data/datacache'
 import { BasketModel } from '../models/basket'
 import * as security from '../lib/insecurity'
 import { UserModel } from '../models/user'
-import * as models from '../models/index'
 import { type User } from '../data/types'
 import * as utils from '../lib/utils'
+
+// Define validation schema for login
+const loginSchema = z.object({
+  email: z.string().email().max(100),
+  password: z.string().min(1).max(100)
+})
 
 // vuln-code-snippet start loginAdminChallenge loginBenderChallenge loginJimChallenge
 export function login () {
@@ -30,29 +36,53 @@ export function login () {
   }
 
   return (req: Request, res: Response, next: NextFunction) => {
-    verifyPreLoginChallenges(req) // vuln-code-snippet hide-line
-    models.sequelize.query(`SELECT * FROM Users WHERE email = '${req.body.email || ''}' AND password = '${security.hash(req.body.password || '')}' AND deletedAt IS NULL`, { model: UserModel, plain: true }) // vuln-code-snippet vuln-line loginAdminChallenge loginBenderChallenge loginJimChallenge
-      .then((authenticatedUser) => { // vuln-code-snippet neutral-line loginAdminChallenge loginBenderChallenge loginJimChallenge
-        const user = utils.queryResultToJson(authenticatedUser)
-        if (user.data?.id && user.data.totpSecret !== '') {
-          res.status(401).json({
-            status: 'totp_token_required',
-            data: {
-              tmpToken: security.authorize({
-                userId: user.data.id,
-                type: 'password_valid_needs_second_factor_token'
-              })
-            }
-          })
-        } else if (user.data?.id) {
-          // @ts-expect-error FIXME some properties missing in user - vuln-code-snippet hide-line
-          afterLogin(user, res, next)
-        } else {
-          res.status(401).send(res.__('Invalid email or password.'))
+    try {
+      // Validate input
+      const validatedData = loginSchema.parse(req.body)
+
+      verifyPreLoginChallenges(req) // vuln-code-snippet hide-line
+
+      // Use parameterized queries instead of string interpolation
+      console.log('login validatedData', validatedData)
+      console.log('login validatedData.email', validatedData.email)
+      console.log('login validatedData.password', validatedData.password)
+      console.log('login validatedData.password hashed', security.hash(validatedData.password))
+      UserModel.findOne({
+        where: {
+          email: validatedData.email,
+          password: security.hash(validatedData.password)
         }
-      }).catch((error: Error) => {
-        next(error)
       })
+        .then((authenticatedUser) => { // vuln-code-snippet neutral-line loginAdminChallenge loginBenderChallenge loginJimChallenge
+          const user = utils.queryResultToJson(authenticatedUser)
+          console.log('authenticatedUser', authenticatedUser)
+          console.log('user', user)
+          if (user.data?.id && user.data.totpSecret !== '') {
+            res.status(401).json({
+              status: 'totp_token_required',
+              data: {
+                tmpToken: security.authorize({
+                  userId: user.data.id,
+                  type: 'password_valid_needs_second_factor_token'
+                })
+              }
+            })
+          } else if (user.data?.id) {
+          // @ts-expect-error FIXME some properties missing in user - vuln-code-snippet hide-line
+            afterLogin(user, res, next)
+          } else {
+            res.status(401).send(res.__('Invalid email or password.'))
+          }
+        }).catch((error: Error) => {
+          next(error)
+        })
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ message: 'Invalid input data', details: error.errors })
+      } else {
+        next(error)
+      }
+    }
   }
   // vuln-code-snippet end loginAdminChallenge loginBenderChallenge loginJimChallenge
 

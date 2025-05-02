@@ -8,6 +8,7 @@ import { AllHtmlEntities as Entities } from 'html-entities'
 import config from 'config'
 import pug from 'pug'
 import fs from 'node:fs/promises'
+import { URL } from 'url'
 
 import * as challengeUtils from '../lib/challengeUtils'
 import { themes } from '../views/themes/themes'
@@ -86,8 +87,23 @@ export function getUserProfile () {
       const fn = pug.compile(template)
 
       // Set a secure Content-Security-Policy
-      const sanitizedProfileImage = user.profileImage || ''
-      const CSP = `default-src 'self'; img-src 'self' ${sanitizedProfileImage}; script-src 'self' https://code.getmdl.io http://ajax.googleapis.com; style-src 'self' https://code.getmdl.io; font-src 'self'`
+      // Properly sanitize profile image URL to prevent CSP injection
+      let sanitizedProfileImage = ''
+      if (user.profileImage) {
+        try {
+          const url = new URL(user.profileImage)
+          // Only allow http and https protocols
+          if (url.protocol === 'http:' || url.protocol === 'https:') {
+            // Extract just the origin and path to prevent CSP injection
+            sanitizedProfileImage = `${url.origin}${url.pathname}`
+          }
+        } catch (e) {
+          // If URL parsing fails, don't include the profile image in CSP
+          sanitizedProfileImage = ''
+        }
+      }
+
+      const CSP = `default-src 'self'; img-src 'self' ${sanitizedProfileImage}; script-src 'self' https://code.getmdl.io https://ajax.googleapis.com; style-src 'self' https://code.getmdl.io https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com`
 
       // For CTF purposes
       if (username && user.profileImage?.match(/;[ ]*script-src(.)*'unsafe-inline'/g) !== null &&
